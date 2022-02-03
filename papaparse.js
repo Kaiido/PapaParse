@@ -721,24 +721,11 @@ License: MIT
 
 		var reader, slice;
 
-		// FileReader is better than FileReaderSync (even in worker) - see http://stackoverflow.com/q/24708649/1048862
-		// But Firefox is a pill, too - see issue #76: https://github.com/mholt/PapaParse/issues/76
-		var usingAsyncReader = typeof FileReader !== 'undefined';	// Safari doesn't consider it a function - see issue #105
-
 		this.stream = function(file)
 		{
 			this._input = file;
 			slice = file.slice || file.webkitSlice || file.mozSlice;
-
-			if (usingAsyncReader)
-			{
-				reader = new FileReader();		// Preferred method of reading files, even in workers
-				reader.onload = bindFunction(this._chunkLoaded, this);
-				reader.onerror = bindFunction(this._chunkError, this);
-			}
-			else
-				reader = new FileReaderSync();	// Hack for running in a web worker in Firefox
-
+			this._decoder = new TextDecoder(this._config.encoding);
 			this._nextChunk();	// Starts streaming
 		};
 
@@ -756,17 +743,19 @@ License: MIT
 				var end = Math.min(this._start + this._config.chunkSize, this._input.size);
 				input = slice.call(input, this._start, end);
 			}
-			var txt = reader.readAsText(input, this._config.encoding);
-			if (!usingAsyncReader)
-				this._chunkLoaded({ target: { result: txt } });	// mimic the async signature
+      
+      input.arrayBuffer()
+        .then(bindFunction(this._chunkLoaded, this))
+        .catch(bindFunction(this._chunkError, this));
 		};
 
-		this._chunkLoaded = function(event)
+		this._chunkLoaded = function(buffer)
 		{
 			// Very important to increment start each time before handling results
 			this._start += this._config.chunkSize;
 			this._finished = !this._config.chunkSize || this._start >= this._input.size;
-			this.parseChunk(event.target.result);
+			var txt = this._decoder.decode(buffer, { stream: true });
+			this.parseChunk(txt);
 		};
 
 		this._chunkError = function()
